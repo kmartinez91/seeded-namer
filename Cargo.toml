@@ -1,0 +1,8 @@
+[package]
+name = "seeded-namer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic name generator: same seed, same name, every time."
+
+[dependencies]

@@ -42,6 +42,19 @@ $ cargo run --
 Bralon
 ```
 
+Pick a different syllable set with `--style` (`default`, `harsh`, `soft`,
+or `sci-fi`), in addition to seed and count:
+
+```
+$ cargo run -- --style harsh 42 3
+Grokk
+Dzarug
+Kroth
+
+$ cargo run -- --style sci-fi 42
+Zirox
+```
+
 ## As a library
 
 The whole thing is built from pure functions — no RNG object to construct,
@@ -54,9 +67,18 @@ let name = generate_name(42);
 assert_eq!(name, generate_name(42)); // always true
 ```
 
-`generate_name` and `name_sequence` are deterministic in their arguments
-alone, so they're trivial to unit test: pass a seed, check the output,
-no setup or mocking required.
+To pick a syllable set other than the default, use `generate_name_with_style`
+with a `Style`:
+
+```rust
+use seeded_namer::{generate_name_with_style, Style};
+
+let name = generate_name_with_style(42, Style::Harsh);
+```
+
+`generate_name` and `name_sequence` (and their `_with_style` counterparts)
+are deterministic in their arguments alone, so they're trivial to unit test:
+pass a seed, check the output, no setup or mocking required.
 
 ## Compatibility
 

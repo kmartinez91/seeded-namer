@@ -42,12 +42,72 @@ const CODAS: &[&str] = &[
     "", "", "", "n", "r", "s", "l", "th", "nd", "rk", "ll", "ss", "x", "m", "sh",
 ];
 
+const HARSH_ONSETS: &[&str] = &[
+    "b", "br", "d", "dr", "g", "gr", "k", "kr", "kh", "z", "zg", "x", "thr", "vr", "grk",
+];
+const HARSH_VOWELS: &[&str] = &["a", "o", "u", "au", "ou", "ak", "ug"];
+const HARSH_CODAS: &[&str] = &["k", "g", "z", "rk", "zg", "gg", "kk", "th", "x", "grn"];
+
+const SOFT_ONSETS: &[&str] = &["l", "m", "n", "s", "sh", "f", "v", "th", "w", "wh", "y"];
+const SOFT_VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ae", "ea", "ia", "io", "ui"];
+const SOFT_CODAS: &[&str] = &[
+    "", "", "", "n", "m", "l", "s", "th", "ne", "le", "se",
+];
+
+const SCIFI_ONSETS: &[&str] = &[
+    "x", "z", "zy", "qu", "vor", "kry", "xen", "jy", "nyx", "zir", "vex", "quy",
+];
+const SCIFI_VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ax", "ex", "ix", "ox", "yx"];
+const SCIFI_CODAS: &[&str] = &[
+    "", "x", "z", "on", "ax", "ex", "ix", "tron", "nix", "zar", "vex",
+];
+
+/// A syllable set to build names from. `Default` is the original set this
+/// crate shipped with; the others exist so callers can match a name's
+/// texture to their setting without forking the generator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    Default,
+    Harsh,
+    Soft,
+    SciFi,
+}
+
+impl Style {
+    fn syllable_parts(self) -> (&'static [&'static str], &'static [&'static str], &'static [&'static str]) {
+        match self {
+            Style::Default => (ONSETS, VOWELS, CODAS),
+            Style::Harsh => (HARSH_ONSETS, HARSH_VOWELS, HARSH_CODAS),
+            Style::Soft => (SOFT_ONSETS, SOFT_VOWELS, SOFT_CODAS),
+            Style::SciFi => (SCIFI_ONSETS, SCIFI_VOWELS, SCIFI_CODAS),
+        }
+    }
+}
+
+impl std::str::FromStr for Style {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "default" => Ok(Style::Default),
+            "harsh" => Ok(Style::Harsh),
+            "soft" => Ok(Style::Soft),
+            "sci-fi" | "scifi" => Ok(Style::SciFi),
+            other => Err(format!(
+                "unknown style {:?}, expected one of: default, harsh, soft, sci-fi",
+                other
+            )),
+        }
+    }
+}
+
 /// Builds one syllable from a state, returning the syllable and the next state.
-fn syllable(state: u64) -> (String, u64) {
-    let (onset_i, state) = pick_index(state, ONSETS.len());
-    let (vowel_i, state) = pick_index(state, VOWELS.len());
-    let (coda_i, state) = pick_index(state, CODAS.len());
-    let text = format!("{}{}{}", ONSETS[onset_i], VOWELS[vowel_i], CODAS[coda_i]);
+fn syllable(state: u64, style: Style) -> (String, u64) {
+    let (onsets, vowels, codas) = style.syllable_parts();
+    let (onset_i, state) = pick_index(state, onsets.len());
+    let (vowel_i, state) = pick_index(state, vowels.len());
+    let (coda_i, state) = pick_index(state, codas.len());
+    let text = format!("{}{}{}", onsets[onset_i], vowels[vowel_i], codas[coda_i]);
     (text, state)
 }
 
@@ -61,36 +121,49 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-/// Generates one name from a seed. Two or three syllables, first letter
-/// capitalized, everything else lowercase.
-pub fn generate_name(seed: u64) -> String {
+/// Generates one name from a seed and style. Two or three syllables, first
+/// letter capitalized, everything else lowercase.
+pub fn generate_name_with_style(seed: u64, style: Style) -> String {
     let (syllable_count, state) = pick_index(seed, 2);
     let syllable_count = 2 + syllable_count; // 2 or 3
 
     let mut name = String::new();
     let mut state = state;
     for _ in 0..syllable_count {
-        let (part, next_state) = syllable(state);
+        let (part, next_state) = syllable(state, style);
         name.push_str(&part);
         state = next_state;
     }
     capitalize(&name)
 }
 
-/// Generates `count` names starting from `seed`. Each name in the sequence
-/// is derived from the previous name's ending state, so the whole sequence
-/// is a pure function of `(seed, count)`: calling it twice with the same
-/// arguments always yields the same `Vec`, and `name_sequence(seed, n)` is
-/// always a prefix of `name_sequence(seed, n + 1)`.
-pub fn name_sequence(seed: u64, count: usize) -> Vec<String> {
+/// Generates one name from a seed using the default style. See
+/// [`generate_name_with_style`] to pick a different syllable set.
+pub fn generate_name(seed: u64) -> String {
+    generate_name_with_style(seed, Style::Default)
+}
+
+/// Generates `count` names starting from `seed`, using `style`. Each name in
+/// the sequence is derived from the previous name's ending state, so the
+/// whole sequence is a pure function of `(seed, count, style)`: calling it
+/// twice with the same arguments always yields the same `Vec`, and
+/// `name_sequence_with_style(seed, n, style)` is always a prefix of
+/// `name_sequence_with_style(seed, n + 1, style)`.
+pub fn name_sequence_with_style(seed: u64, count: usize, style: Style) -> Vec<String> {
     let mut names = Vec::with_capacity(count);
     let mut state = seed;
     for _ in 0..count {
-        names.push(generate_name(state));
+        names.push(generate_name_with_style(state, style));
         let (_, next_state) = next_u64(state);
         state = next_state;
     }
     names
+}
+
+/// Generates `count` names starting from `seed`, using the default style.
+/// See [`name_sequence_with_style`] to pick a different syllable set.
+pub fn name_sequence(seed: u64, count: usize) -> Vec<String> {
+    name_sequence_with_style(seed, count, Style::Default)
 }
 
 #[cfg(test)]
@@ -142,5 +215,43 @@ mod tests {
     #[test]
     fn capitalize_handles_empty_string() {
         assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn style_parses_known_names() {
+        assert_eq!("default".parse::<Style>(), Ok(Style::Default));
+        assert_eq!("harsh".parse::<Style>(), Ok(Style::Harsh));
+        assert_eq!("soft".parse::<Style>(), Ok(Style::Soft));
+        assert_eq!("sci-fi".parse::<Style>(), Ok(Style::SciFi));
+        assert_eq!("SCIFI".parse::<Style>(), Ok(Style::SciFi));
+    }
+
+    #[test]
+    fn style_rejects_unknown_name() {
+        assert!("robotic".parse::<Style>().is_err());
+    }
+
+    #[test]
+    fn generate_name_matches_default_style() {
+        assert_eq!(generate_name(42), generate_name_with_style(42, Style::Default));
+    }
+
+    #[test]
+    fn different_styles_are_deterministic_per_style() {
+        for style in [Style::Default, Style::Harsh, Style::Soft, Style::SciFi] {
+            assert_eq!(
+                generate_name_with_style(11, style),
+                generate_name_with_style(11, style)
+            );
+        }
+    }
+
+    #[test]
+    fn every_style_produces_nonempty_names() {
+        for style in [Style::Default, Style::Harsh, Style::Soft, Style::SciFi] {
+            for seed in 0..20u64 {
+                assert!(!generate_name_with_style(seed, style).is_empty());
+            }
+        }
     }
 }

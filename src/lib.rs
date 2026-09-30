@@ -31,6 +31,28 @@ pub fn pick_index(state: u64, len: usize) -> (usize, u64) {
     ((value % len as u64) as usize, next_state)
 }
 
+/// Picks an index into `weights` with probability proportional to each weight,
+/// returning the index and the next state.
+///
+/// The total weight must be nonzero. Entries with weight 0 are never picked.
+/// For a table where every weight is 1 this is the same draw as
+/// [`pick_index`], and repeating an entry `n` times is the same as giving it
+/// weight `n`, so tables that used repeats to bias a pick can switch to
+/// explicit weights without changing any seed's output.
+pub fn pick_weighted(state: u64, weights: &[u32]) -> (usize, u64) {
+    let total: u64 = weights.iter().map(|&w| w as u64).sum();
+    debug_assert!(total > 0, "pick_weighted called with no weight to pick from");
+    let (value, next_state) = next_u64(state);
+    let mut roll = value % total;
+    for (i, &w) in weights.iter().enumerate() {
+        if roll < w as u64 {
+            return (i, next_state);
+        }
+        roll -= w as u64;
+    }
+    unreachable!("roll is below the total weight, so some entry must claim it")
+}
+
 const ONSETS: &[&str] = &[
     "b", "br", "c", "ch", "cr", "d", "dr", "f", "fr", "g", "gr", "h", "j", "k", "kr", "l", "m",
     "n", "p", "pr", "qu", "r", "s", "sh", "sk", "st", "str", "t", "th", "tr", "v", "w", "z",
@@ -38,28 +60,38 @@ const ONSETS: &[&str] = &[
 
 const VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ae", "ai", "ia", "io", "ou"];
 
-const CODAS: &[&str] = &[
-    "", "", "", "n", "r", "s", "l", "th", "nd", "rk", "ll", "ss", "x", "m", "sh",
+// Codas are (text, weight) pairs. The empty coda is weighted up so open
+// syllables stay common.
+type Coda = (&'static str, u32);
+
+const CODAS: &[Coda] = &[
+    ("", 3), ("n", 1), ("r", 1), ("s", 1), ("l", 1), ("th", 1), ("nd", 1), ("rk", 1),
+    ("ll", 1), ("ss", 1), ("x", 1), ("m", 1), ("sh", 1),
 ];
 
 const HARSH_ONSETS: &[&str] = &[
     "b", "br", "d", "dr", "g", "gr", "k", "kr", "kh", "z", "zg", "x", "thr", "vr", "grk",
 ];
 const HARSH_VOWELS: &[&str] = &["a", "o", "u", "au", "ou", "ak", "ug"];
-const HARSH_CODAS: &[&str] = &["k", "g", "z", "rk", "zg", "gg", "kk", "th", "x", "grn"];
+const HARSH_CODAS: &[Coda] = &[
+    ("k", 1), ("g", 1), ("z", 1), ("rk", 1), ("zg", 1), ("gg", 1), ("kk", 1), ("th", 1),
+    ("x", 1), ("grn", 1),
+];
 
 const SOFT_ONSETS: &[&str] = &["l", "m", "n", "s", "sh", "f", "v", "th", "w", "wh", "y"];
 const SOFT_VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ae", "ea", "ia", "io", "ui"];
-const SOFT_CODAS: &[&str] = &[
-    "", "", "", "n", "m", "l", "s", "th", "ne", "le", "se",
+const SOFT_CODAS: &[Coda] = &[
+    ("", 3), ("n", 1), ("m", 1), ("l", 1), ("s", 1), ("th", 1), ("ne", 1), ("le", 1),
+    ("se", 1),
 ];
 
 const SCIFI_ONSETS: &[&str] = &[
     "x", "z", "zy", "qu", "vor", "kry", "xen", "jy", "nyx", "zir", "vex", "quy",
 ];
 const SCIFI_VOWELS: &[&str] = &["a", "e", "i", "o", "u", "ax", "ex", "ix", "ox", "yx"];
-const SCIFI_CODAS: &[&str] = &[
-    "", "x", "z", "on", "ax", "ex", "ix", "tron", "nix", "zar", "vex",
+const SCIFI_CODAS: &[Coda] = &[
+    ("", 1), ("x", 1), ("z", 1), ("on", 1), ("ax", 1), ("ex", 1), ("ix", 1), ("tron", 1),
+    ("nix", 1), ("zar", 1), ("vex", 1),
 ];
 
 /// A syllable set to build names from. `Default` is the original set this
@@ -74,7 +106,7 @@ pub enum Style {
 }
 
 impl Style {
-    fn syllable_parts(self) -> (&'static [&'static str], &'static [&'static str], &'static [&'static str]) {
+    fn syllable_parts(self) -> (&'static [&'static str], &'static [&'static str], &'static [Coda]) {
         match self {
             Style::Default => (ONSETS, VOWELS, CODAS),
             Style::Harsh => (HARSH_ONSETS, HARSH_VOWELS, HARSH_CODAS),
@@ -106,8 +138,9 @@ fn syllable(state: u64, style: Style) -> (String, u64) {
     let (onsets, vowels, codas) = style.syllable_parts();
     let (onset_i, state) = pick_index(state, onsets.len());
     let (vowel_i, state) = pick_index(state, vowels.len());
-    let (coda_i, state) = pick_index(state, codas.len());
-    let text = format!("{}{}{}", onsets[onset_i], vowels[vowel_i], codas[coda_i]);
+    let weights: Vec<u32> = codas.iter().map(|&(_, w)| w).collect();
+    let (coda_i, state) = pick_weighted(state, &weights);
+    let text = format!("{}{}{}", onsets[onset_i], vowels[vowel_i], codas[coda_i].0);
     (text, state)
 }
 
@@ -210,6 +243,45 @@ mod tests {
             let (i, _) = pick_index(state, 7);
             assert!(i < 7);
         }
+    }
+
+    #[test]
+    fn pick_weighted_with_equal_weights_matches_pick_index() {
+        for state in 0..50u64 {
+            assert_eq!(pick_weighted(state, &[1, 1, 1, 1, 1]), pick_index(state, 5));
+        }
+    }
+
+    #[test]
+    fn pick_weighted_matches_repeated_entries() {
+        // [3, 1, 1] is the same table as [a, a, a, b, c].
+        for state in 0..50u64 {
+            let (weighted, _) = pick_weighted(state, &[3, 1, 1]);
+            let (repeated, _) = pick_index(state, 5);
+            let expected = match repeated {
+                0..=2 => 0,
+                3 => 1,
+                _ => 2,
+            };
+            assert_eq!(weighted, expected);
+        }
+    }
+
+    #[test]
+    fn pick_weighted_never_picks_zero_weight() {
+        for state in 0..200u64 {
+            let (i, _) = pick_weighted(state, &[0, 2, 0, 1]);
+            assert!(i == 1 || i == 3);
+        }
+    }
+
+    #[test]
+    fn pick_weighted_favors_heavier_entries() {
+        let mut counts = [0u32; 2];
+        for state in 0..1000u64 {
+            counts[pick_weighted(state, &[9, 1]).0] += 1;
+        }
+        assert!(counts[0] > counts[1] * 3);
     }
 
     #[test]
